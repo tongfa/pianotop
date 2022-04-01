@@ -4,7 +4,11 @@ use std::{net::SocketAddr, time::Duration};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Error};
 use tokio_tungstenite::tungstenite::{Message, Result};
-//use futures_util::stream::stream::StreamExt;
+
+
+async fn handle_lsif() -> Message {
+    Message::text(r#"{}"#)
+}
 
 async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
     if let Err(e) = handle_connection(peer, stream).await {
@@ -14,6 +18,16 @@ async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
         }
     }
 }
+
+
+fn grok_command(s: &str) -> (&str, &str) {
+    match s.chars().next() {
+        Some(c) => s.split_at(c.len_utf8() * 4),
+        None => s.split_at(0),
+    }
+}
+
+
 
 async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
     let ws_stream = accept_async(stream).await.expect("Failed to accept");
@@ -29,11 +43,21 @@ async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
                 match msg {
                     Some(msg) => {
                         let msg = msg?;
-                        if msg.is_text() ||msg.is_binary() {
-			    info!("got: {}", msg);
-                            ws_sender.send(msg).await?;
-                        } else if msg.is_close() {
+			if msg.is_close() {
+			    info!("closed");
                             break Ok(())
+                        }
+			let packet = msg.to_text().unwrap();
+			let (command, data) = grok_command(packet);
+			match command {
+			    "lsif" => {
+				let data = handle_lsif().await;
+				ws_sender.send(data).await?;			
+			    }
+			    _ => {
+				info!("unknown command");
+				break Ok(())
+			    }
                         }
                     }
                     None => break Ok(()),
