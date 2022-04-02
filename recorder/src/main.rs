@@ -1,13 +1,70 @@
 use futures_util::{SinkExt, StreamExt};
 use log::*;
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Error};
 use tokio_tungstenite::tungstenite::{Message, Result};
+use alsa;
+use std::ffi::CString;
+use std::vec::Vec;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct PortHandle {
+    name: String,
+    client: i32,
+    port: i32,
+}
+
+fn open_midi_seq() -> alsa::Seq {
+    let s = alsa::Seq::open(None, Some(alsa::Direction::Capture), true).unwrap();
+    let cstr = CString::new("PianoTop Sequencer").unwrap();
+    s.set_client_name(&cstr).unwrap();
+    s
+}
+
+fn list_midi_ports(s: &alsa::Seq) -> Vec<PortHandle> {
+    // Iterate over clients and clients' ports
+    let our_id = s.client_id().unwrap();
+    let ci = alsa::seq::ClientIter::new(&s);
+    let mut port_list = Vec::new();
+    for client in ci {
+        if client.get_client() == our_id { continue; } // Skip ourselves
+        let pi = alsa::seq::PortIter::new(&s, client.get_client());
+        for port in pi {
+            let caps = port.get_capability();
+
+            // Check that it's a normal input port
+            if !caps.contains(alsa::seq::PortCap::READ) || !caps.contains(alsa::seq::PortCap::SUBS_READ) { continue; }
+            if !port.get_type().contains(alsa::seq::PortType::MIDI_GENERIC) { continue; }
+
+            info!("Found port: {:?}", port);
+
+            let ph = PortHandle {
+                name: String::from(port.get_name().unwrap()),
+                client: port.get_client(),
+                port: port.get_port(),
+            };
+            port_list.push(ph)
+            
+            // Connect source and dest ports
+            // let subs = seq::PortSubscribe::empty()?;
+            // subs.set_sender(seq::Addr { client: port.get_client(), port: port.get_port() });
+            // subs.set_dest(seq::Addr { client: our_id, port: our_port });
+            // println!("Reading from midi input {:?}", port);
+            // s.subscribe_port(&subs)?;
+        }
+    }
+    port_list
+}
 
 
 async fn handle_lsif() -> Message {
-    Message::text(r#"{}"#)
+    let s = open_midi_seq();
+    let port_list = list_midi_ports(&s);
+    let mut response = String::from("lsif\n");
+    response.push_str(serde_json::to_string(&port_list).unwrap().as_str());
+    Message::text(response)
 }
 
 async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
@@ -19,7 +76,6 @@ async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
     }
 }
 
-
 fn grok_command(s: &str) -> (&str, &str) {
     match s.chars().next() {
         Some(c) => s.split_at(c.len_utf8() * 4),
@@ -27,14 +83,11 @@ fn grok_command(s: &str) -> (&str, &str) {
     }
 }
 
-
-
 async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
     let ws_stream = accept_async(stream).await.expect("Failed to accept");
     info!("New WebSocket connection: {}", peer);
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    let mut interval = tokio::time::interval(Duration::from_millis(1000));
-
+    
     // Echo incoming WebSocket messages and send a message periodically every second.
 
     loop {
@@ -62,9 +115,6 @@ async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
                     }
                     None => break Ok(()),
                 }
-            }
-            _ = interval.tick() => {
-                ws_sender.send(Message::Text("pong".to_owned())).await?;
             }
         }
     }
