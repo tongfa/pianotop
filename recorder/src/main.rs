@@ -7,6 +7,7 @@ use tokio_tungstenite::tungstenite::{Message, Result};
 use alsa;
 use std::ffi::CString;
 use std::vec::Vec;
+use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -16,21 +17,14 @@ struct PortHandle {
     port: i32,
 }
 
-fn open_midi_seq() -> alsa::Seq {
-    let s = alsa::Seq::open(None, Some(alsa::Direction::Capture), true).unwrap();
-    let cstr = CString::new("PianoTop Sequencer").unwrap();
-    s.set_client_name(&cstr).unwrap();
-    s
-}
-
-fn list_midi_ports(s: &alsa::Seq) -> Vec<PortHandle> {
+fn list_midi_ports(alsaService: &Arc<Mutex<AlsaClient>>) -> Vec<PortHandle> {
     // Iterate over clients and clients' ports
-    let our_id = s.client_id().unwrap();
-    let ci = alsa::seq::ClientIter::new(&s);
+    let alsa = alsaService.lock().unwrap();
+    let ci = alsa::seq::ClientIter::new(&alsa.sequencer);
     let mut port_list = Vec::new();
     for client in ci {
-        if client.get_client() == our_id { continue; } // Skip ourselves
-        let pi = alsa::seq::PortIter::new(&s, client.get_client());
+        if client.get_client() == alsa.port.client { continue; } // Skip ourselves
+        let pi = alsa::seq::PortIter::new(&alsa.sequencer, client.get_client());
         for port in pi {
             let caps = port.get_capability();
 
@@ -59,21 +53,22 @@ fn list_midi_ports(s: &alsa::Seq) -> Vec<PortHandle> {
 }
 
 
-async fn handle_lsif() -> Message {
-    let s = open_midi_seq();
-    let port_list = list_midi_ports(&s);
+async fn handle_lstn(alsa: &Arc<Mutex<AlsaClient>>, data: &str) -> Message {
+    let port_handle: PortHandle = serde_json::from_str(data).unwrap();
+
+    // let subs = alsa::seq::PortSubscribe::empty().unwrap();
+    // subs.set_sender(alsa::seq::Addr { ..port_handle });
+    // subs.set_dest(alsa.port);
+    // println!("Reading from midi input {:?}", port);
+    // alsa.sequencer.subscribe_port(&subs)?;
+    Message::text("lstn\n{}")
+}
+
+async fn handle_lsif(alsa: &Arc<Mutex<AlsaClient>>) -> Message {
+    let port_list = list_midi_ports(&alsa);
     let mut response = String::from("lsif\n");
     response.push_str(serde_json::to_string(&port_list).unwrap().as_str());
     Message::text(response)
-}
-
-async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
-    if let Err(e) = handle_connection(peer, stream).await {
-        match e {
-            Error::ConnectionClosed | Error::Protocol(_) | Error::Utf8 => (),
-            err => error!("Error processing connection: {}", err),
-        }
-    }
 }
 
 fn grok_command(s: &str) -> (&str, &str) {
@@ -83,7 +78,7 @@ fn grok_command(s: &str) -> (&str, &str) {
     }
 }
 
-async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
+async fn handle_connection(peer: SocketAddr, stream: TcpStream, alsa: &Arc<Mutex<AlsaClient>>) -> Result<()> {
     let ws_stream = accept_async(stream).await.expect("Failed to accept");
     info!("New WebSocket connection: {}", peer);
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
@@ -104,7 +99,11 @@ async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
 			let (command, data) = grok_command(packet);
 			match command {
 			    "lsif" => {
-				let data = handle_lsif().await;
+				let data = handle_lsif(alsa).await;
+				ws_sender.send(data).await?;			
+			    }
+			    "lstn" => {
+				let data = handle_lstn(alsa, data).await;
 				ws_sender.send(data).await?;			
 			    }
 			    _ => {
@@ -120,17 +119,73 @@ async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
     }
 }
 
+async fn accept_connection(peer: SocketAddr, stream: TcpStream, alsa: Arc<Mutex<AlsaClient>>) {
+    if let Err(e) = handle_connection(peer, stream, &alsa).await {
+        match e {
+            Error::ConnectionClosed | Error::Protocol(_) | Error::Utf8 => (),
+            err => error!("Error processing connection: {}", err),
+        }
+    }
+}
+
+/* Safety
+ * 
+ * 
+ */
+
+struct AlsaClient {
+    sequencer: alsa::Seq,
+    port: alsa::seq::Addr,
+}
+
+const SEQUENCER_OUTPUT_ROOM: u32 = 500;
+const SEQUENCER_BEATS: u32 = 120; // in theory should be variable
+const SEQUENCER_TICKS: i32 = 384;
+const METRONOME_PORT: i32 = 0;
+const OUTPUT_PORT: i32 = 1;
+
+fn open_midi_seq() -> AlsaClient {
+    let sequencer = alsa::Seq::open(None, Some(alsa::Direction::Capture), true).unwrap();
+    let cstr = CString::new("PianoTop Sequencer").unwrap();
+    sequencer.set_client_name(&cstr).unwrap();
+
+    sequencer.set_client_pool_output_room(SEQUENCER_OUTPUT_ROOM);
+    // Create a destination port we can read from
+    // let mut sub = seq::PortSubscribe::empty().unwrap();
+    // dinfo.set_capability(seq::PortCap::WRITE | seq::PortCap::SUBS_WRITE);
+    // dinfo.set_type(seq::PortType::MIDI_GENERIC | seq::PortType::APPLICATION);
+    // dinfo.set_name(&cstr);
+    // dinfo.set_timestamp_queue(1);
+    
+    // sequencer.create_port(&dinfo).unwrap();
+    // let port = dinfo.get_port();    
+
+    let qcstr = CString::new("PianoTop Sequencer").unwrap();
+    let queue = sequencer.alloc_named_queue(&qcstr).unwrap();
+    let queue_tempo = alsa::seq::QueueTempo::empty().unwrap();
+    queue_tempo.set_tempo(6000000 / SEQUENCER_BEATS);
+    queue_tempo.set_ppq(SEQUENCER_TICKS);
+
+    sequencer.set_queue_tempo(queue, &queue_tempo);
+    let port = alsa::seq::Addr {client: sequencer.client_id().unwrap(), port: OUTPUT_PORT};
+    
+    AlsaClient {sequencer, port}
+}
+
 #[tokio::main]
 async fn event_loop() {
     let addr = "127.0.0.1:8123";
     let listener = TcpListener::bind(&addr).await.expect("Can't listen");
     info!("Listening on: {}", addr);
 
+    let alsaClient = Arc::new(Mutex::new(open_midi_seq()));
+    
     while let Ok((stream, _)) = listener.accept().await {
         let peer = stream.peer_addr().expect("connected streams should have a peer address");
         info!("Peer address: {}", peer);
 
-        tokio::spawn(accept_connection(peer, stream));
+        let client = Arc::clone(&alsaClient);
+        tokio::spawn(accept_connection(peer, stream, client));
     }
 }
 
