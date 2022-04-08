@@ -60,7 +60,7 @@ class PianoPlayService {
   listen(device: PPAlsaDevice) {
     console.log('setting device')
     this.data.currentDevice = device
-    this.ws.send(`lstn\n${JSON.stringify([device.handle])}`)
+    this.ws.send(`lstn\n${JSON.stringify(device)}`)
   }
   play() {
     let timeoffset = 0;

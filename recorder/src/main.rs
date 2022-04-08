@@ -4,6 +4,7 @@ use std::{net::SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Error};
 use tokio_tungstenite::tungstenite::{Message, Result};
+use tokio_tungstenite::WebSocketStream;
 use alsa;
 use std::ffi::CString;
 use std::vec::Vec;
@@ -17,9 +18,9 @@ struct PortHandle {
     port: i32,
 }
 
-fn list_midi_ports(alsaService: &Arc<Mutex<AlsaClient>>) -> Vec<PortHandle> {
+fn list_midi_ports(app_state: &Arc<Mutex<AlsaClient>>) -> Vec<PortHandle> {
     // Iterate over clients and clients' ports
-    let alsa = alsaService.lock().unwrap();
+    let alsa = app_state.lock().unwrap();
     let ci = alsa::seq::ClientIter::new(&alsa.sequencer);
     let mut port_list = Vec::new();
     for client in ci {
@@ -52,8 +53,7 @@ fn list_midi_ports(alsaService: &Arc<Mutex<AlsaClient>>) -> Vec<PortHandle> {
     port_list
 }
 
-
-async fn handle_lstn(alsa: &Arc<Mutex<AlsaClient>>, data: &str) -> Message {
+fn handle_lstn(alsa: &Arc<Mutex<AlsaClient>>, data: &str) -> Message {
     let port_handle: PortHandle = serde_json::from_str(data).unwrap();
 
     // let subs = alsa::seq::PortSubscribe::empty().unwrap();
@@ -64,7 +64,7 @@ async fn handle_lstn(alsa: &Arc<Mutex<AlsaClient>>, data: &str) -> Message {
     Message::text("lstn\n{}")
 }
 
-async fn handle_lsif(alsa: &Arc<Mutex<AlsaClient>>) -> Message {
+fn handle_lsif(alsa: &Arc<Mutex<AlsaClient>>) -> Message {
     let port_list = list_midi_ports(&alsa);
     let mut response = String::from("lsif\n");
     response.push_str(serde_json::to_string(&port_list).unwrap().as_str());
@@ -73,60 +73,29 @@ async fn handle_lsif(alsa: &Arc<Mutex<AlsaClient>>) -> Message {
 
 fn grok_command(s: &str) -> (&str, &str) {
     match s.chars().next() {
-        Some(c) => s.split_at(c.len_utf8() * 4),
+        Some(c) => {
+            s.split_at(c.len_utf8() * 4)
+        },
         None => s.split_at(0),
     }
 }
 
-async fn handle_connection(peer: SocketAddr, stream: TcpStream, alsa: &Arc<Mutex<AlsaClient>>) -> Result<()> {
-    let ws_stream = accept_async(stream).await.expect("Failed to accept");
-    info!("New WebSocket connection: {}", peer);
-    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    
-    // Echo incoming WebSocket messages and send a message periodically every second.
-
-    loop {
-        tokio::select! {
-            msg = ws_receiver.next() => {
-                match msg {
-                    Some(msg) => {
-                        let msg = msg?;
-			if msg.is_close() {
-			    info!("closed");
-                            break Ok(())
-                        }
-			let packet = msg.to_text().unwrap();
-			let (command, data) = grok_command(packet);
-			match command {
-			    "lsif" => {
-				let data = handle_lsif(alsa).await;
-				ws_sender.send(data).await?;			
-			    }
-			    "lstn" => {
-				let data = handle_lstn(alsa, data).await;
-				ws_sender.send(data).await?;			
-			    }
-			    _ => {
-				info!("unknown command");
-				break Ok(())
-			    }
-                        }
-                    }
-                    None => break Ok(()),
-                }
-            }
-        }
+fn handle_socket_message(msg: Message, alsa: &Arc<Mutex<AlsaClient>>) -> Result<Message, &str> {
+    let packet = msg.to_text().unwrap();
+    let (command, data) = grok_command(packet);
+    match command {
+	"lsif" => {
+	    Ok(handle_lsif(alsa))
+	}
+	"lstn" => {
+	    Ok(handle_lstn(alsa, data))
+	}
+	_ => {
+            Err("unknown command")
+	}
     }
 }
 
-async fn accept_connection(peer: SocketAddr, stream: TcpStream, alsa: Arc<Mutex<AlsaClient>>) {
-    if let Err(e) = handle_connection(peer, stream, &alsa).await {
-        match e {
-            Error::ConnectionClosed | Error::Protocol(_) | Error::Utf8 => (),
-            err => error!("Error processing connection: {}", err),
-        }
-    }
-}
 
 /* Safety
  * 
@@ -172,27 +141,81 @@ fn open_midi_seq() -> AlsaClient {
     AlsaClient {sequencer, port}
 }
 
+#[derive(PartialEq)]
+enum WsConnectionState {
+    Disconnected,
+    Accepted,
+    Connected,
+}
+
+
+async fn ws_event_loop(app_state: &Arc<Mutex<AlsaClient>>, mut ws_stream: WebSocketStream<TcpStream>) {
+    loop {
+        let msg = ws_stream.next().await;
+        match msg {
+            Some(msg) => {
+                match msg {
+                    Ok(msg) => {
+                        if msg.is_close() {
+                            error!("websocket closed");
+                        }
+                        let data = handle_socket_message(msg, app_state);
+                        match data {
+                            Ok(message) => ws_stream.send(message).await.expect("ws_stream.send failed"),
+                            Err(err) => info!("error: {}", err),
+                        }
+                    }
+                    Err(err) => info!("error: {}", err),
+                }
+            },
+            None => info!("error: empty packet"),
+        }
+    }
+}
+
+
+async fn accept_websocket(app_state: &Arc<Mutex<AlsaClient>>, stream: TcpStream) {
+    let s = accept_async(stream).await;
+    match s {
+        Ok(ws_stream) => {
+            info!("New WebSocket connection");
+            ws_event_loop(app_state, ws_stream).await;
+        },
+        _ => error!("Error processing connection"),
+    }
+}
+
+async fn listen_websocket(app_state: &Arc<Mutex<AlsaClient>>, listener: TcpListener) {
+    loop {
+        let s = listener.accept().await;
+        match s {
+            Ok(st) => {
+                let stream = st.0;
+                let peer = stream.peer_addr().expect("connected streams should have a peer address");
+                info!("Peer address: {}", peer);
+                accept_websocket(app_state, stream).await;
+            },
+            Err(err) => info!("listen websocket error: {}", err),
+        }
+    }
+}
+
+
 #[tokio::main]
-async fn event_loop() {
+async fn run() {
     let addr = "127.0.0.1:8123";
     let listener = TcpListener::bind(&addr).await.expect("Can't listen");
     info!("Listening on: {}", addr);
 
-    let alsaClient = Arc::new(Mutex::new(open_midi_seq()));
-    
-    while let Ok((stream, _)) = listener.accept().await {
-        let peer = stream.peer_addr().expect("connected streams should have a peer address");
-        info!("Peer address: {}", peer);
+    let app_state = Arc::new(Mutex::new(open_midi_seq()));
 
-        let client = Arc::clone(&alsaClient);
-        tokio::spawn(accept_connection(peer, stream, client));
-    }
+    listen_websocket(&app_state, listener).await;
 }
 
 fn main() {
     env_logger::init();
 
-    event_loop();
+    run();
 
     info!("main exiting");
 }
