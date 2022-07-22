@@ -41,7 +41,7 @@ fn list_midi_ports(app_state: &Arc<Mutex<AlsaClient>>) -> Vec<PortHandle> {
                 port: port.get_port(),
             };
             port_list.push(ph)
-            
+
             // Connect source and dest ports
             // let subs = seq::PortSubscribe::empty()?;
             // subs.set_sender(seq::Addr { client: port.get_client(), port: port.get_port() });
@@ -98,8 +98,8 @@ fn handle_socket_message(msg: Message, alsa: &Arc<Mutex<AlsaClient>>) -> Result<
 
 
 /* Safety
- * 
- * 
+ *
+ *
  */
 
 struct AlsaClient {
@@ -125,9 +125,9 @@ fn open_midi_seq() -> AlsaClient {
     // dinfo.set_type(seq::PortType::MIDI_GENERIC | seq::PortType::APPLICATION);
     // dinfo.set_name(&cstr);
     // dinfo.set_timestamp_queue(1);
-    
+
     // sequencer.create_port(&dinfo).unwrap();
-    // let port = dinfo.get_port();    
+    // let port = dinfo.get_port();
 
     let qcstr = CString::new("PianoTop Sequencer").unwrap();
     let queue = sequencer.alloc_named_queue(&qcstr).unwrap();
@@ -137,7 +137,7 @@ fn open_midi_seq() -> AlsaClient {
 
     sequencer.set_queue_tempo(queue, &queue_tempo);
     let port = alsa::seq::Addr {client: sequencer.client_id().unwrap(), port: OUTPUT_PORT};
-    
+
     AlsaClient {sequencer, port}
 }
 
