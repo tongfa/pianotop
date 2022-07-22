@@ -1,8 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
 use log::*;
-use std::{net::SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{accept_async, tungstenite::Error};
+use tokio_tungstenite::{accept_async};
 use tokio_tungstenite::tungstenite::{Message, Result};
 use tokio_tungstenite::WebSocketStream;
 use alsa;
@@ -118,7 +117,12 @@ fn open_midi_seq() -> AlsaClient {
     let cstr = CString::new("PianoTop Sequencer").unwrap();
     sequencer.set_client_name(&cstr).unwrap();
 
-    sequencer.set_client_pool_output_room(SEQUENCER_OUTPUT_ROOM);
+    let result_room = sequencer.set_client_pool_output_room(SEQUENCER_OUTPUT_ROOM);
+    match result_room {
+        Ok(_r) => {},
+        Err(err) => panic!("allocating sequencer client output room failed: {}", err),
+    }
+
     // Create a destination port we can read from
     // let mut sub = seq::PortSubscribe::empty().unwrap();
     // dinfo.set_capability(seq::PortCap::WRITE | seq::PortCap::SUBS_WRITE);
@@ -135,18 +139,23 @@ fn open_midi_seq() -> AlsaClient {
     queue_tempo.set_tempo(6000000 / SEQUENCER_BEATS);
     queue_tempo.set_ppq(SEQUENCER_TICKS);
 
-    sequencer.set_queue_tempo(queue, &queue_tempo);
+    let result = sequencer.set_queue_tempo(queue, &queue_tempo);
+    match result {
+        Ok(_r) => {},
+        Err(err) => panic!("set queue tempo failed: {}", err),
+    }
+
     let port = alsa::seq::Addr {client: sequencer.client_id().unwrap(), port: OUTPUT_PORT};
-
     AlsaClient {sequencer, port}
+
 }
 
-#[derive(PartialEq)]
-enum WsConnectionState {
-    Disconnected,
-    Accepted,
-    Connected,
-}
+// #[derive(PartialEq)]
+// enum WsConnectionState {
+//     Disconnected,
+//     Accepted,
+//     Connected,
+// }
 
 
 async fn ws_event_loop(app_state: &Arc<Mutex<AlsaClient>>, mut ws_stream: WebSocketStream<TcpStream>) {
