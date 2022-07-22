@@ -23,7 +23,7 @@ fn list_midi_ports(app_state: &Arc<Mutex<AlsaClient>>) -> Vec<PortHandle> {
     let ci = alsa::seq::ClientIter::new(&alsa.sequencer);
     let mut port_list = Vec::new();
     for client in ci {
-        if client.get_client() == alsa.port.client { continue; } // Skip ourselves
+        if client.get_client() == alsa.output_port.client { continue; } // Skip ourselves
         let pi = alsa::seq::PortIter::new(&alsa.sequencer, client.get_client());
         for port in pi {
             let caps = port.get_capability();
@@ -52,14 +52,28 @@ fn list_midi_ports(app_state: &Arc<Mutex<AlsaClient>>) -> Vec<PortHandle> {
     port_list
 }
 
-fn handle_lstn(alsa: &Arc<Mutex<AlsaClient>>, data: &str) -> Message {
-    let port_handle: PortHandle = serde_json::from_str(data).unwrap();
+fn handle_lstn(app_state: &Arc<Mutex<AlsaClient>>, data: &str) -> Message {
+    let selected_port_handle: PortHandle = serde_json::from_str(data).unwrap();
+    let selected_port_addr = alsa::seq::Addr {
+        client: selected_port_handle.client,
+        port: selected_port_handle.port,
+    };
+    let alsa = app_state.lock().unwrap();
+    let subs = alsa::seq::PortSubscribe::empty().unwrap();
+    subs.set_sender(selected_port_addr);
+    // dest is "us"
+    subs.set_dest(alsa.input_port);
+    subs.set_time_update(true);
+    subs.set_time_real(true);
 
-    // let subs = alsa::seq::PortSubscribe::empty().unwrap();
-    // subs.set_sender(alsa::seq::Addr { ..port_handle });
-    // subs.set_dest(alsa.port);
-    // println!("Reading from midi input {:?}", port);
-    // alsa.sequencer.subscribe_port(&subs)?;
+    println!("Reading from midi output {:?}", selected_port_addr);
+    let result = alsa.sequencer.subscribe_port(&subs);
+    match result {
+        Ok(()) => {},
+        Err(err) => {
+            panic!("failed to subscribe to ALSA ports: {}", err)
+        }
+    }
     Message::text("lstn\n{}")
 }
 
@@ -103,13 +117,14 @@ fn handle_socket_message(msg: Message, alsa: &Arc<Mutex<AlsaClient>>) -> Result<
 
 struct AlsaClient {
     sequencer: alsa::Seq,
-    port: alsa::seq::Addr,
+    output_port: alsa::seq::Addr,
+    input_port: alsa::seq::Addr,
 }
 
 const SEQUENCER_OUTPUT_ROOM: u32 = 500;
 const SEQUENCER_BEATS: u32 = 120; // in theory should be variable
 const SEQUENCER_TICKS: i32 = 384;
-const METRONOME_PORT: i32 = 0;
+// const METRONOME_PORT: i32 = 0;
 const OUTPUT_PORT: i32 = 1;
 
 fn open_midi_seq() -> AlsaClient {
@@ -117,36 +132,49 @@ fn open_midi_seq() -> AlsaClient {
     let cstr = CString::new("PianoTop Sequencer").unwrap();
     sequencer.set_client_name(&cstr).unwrap();
 
+    // allocate a kernel side output buffer for MIDI events
     let result_room = sequencer.set_client_pool_output_room(SEQUENCER_OUTPUT_ROOM);
     match result_room {
         Ok(_r) => {},
         Err(err) => panic!("allocating sequencer client output room failed: {}", err),
     }
 
-    // Create a destination port we can read from
-    // let mut sub = seq::PortSubscribe::empty().unwrap();
-    // dinfo.set_capability(seq::PortCap::WRITE | seq::PortCap::SUBS_WRITE);
-    // dinfo.set_type(seq::PortType::MIDI_GENERIC | seq::PortType::APPLICATION);
-    // dinfo.set_name(&cstr);
-    // dinfo.set_timestamp_queue(1);
-
-    // sequencer.create_port(&dinfo).unwrap();
-    // let port = dinfo.get_port();
-
+    // Create a queue for our input port.
     let qcstr = CString::new("PianoTop Sequencer").unwrap();
     let queue = sequencer.alloc_named_queue(&qcstr).unwrap();
+
+    // Set queue tempo, just setting to an arbitrarily high resolution for now.
     let queue_tempo = alsa::seq::QueueTempo::empty().unwrap();
     queue_tempo.set_tempo(6000000 / SEQUENCER_BEATS);
     queue_tempo.set_ppq(SEQUENCER_TICKS);
-
     let result = sequencer.set_queue_tempo(queue, &queue_tempo);
     match result {
         Ok(_r) => {},
         Err(err) => panic!("set queue tempo failed: {}", err),
     }
 
-    let port = alsa::seq::Addr {client: sequencer.client_id().unwrap(), port: OUTPUT_PORT};
-    AlsaClient {sequencer, port}
+
+    // Create our input port
+    let mut dinfo = alsa::seq::PortInfo::empty().unwrap();
+    dinfo.set_capability(
+        alsa::seq::PortCap::WRITE |
+        alsa::seq::PortCap::SUBS_WRITE |
+        alsa::seq::PortCap::READ |
+        alsa::seq::PortCap::SUBS_READ);
+    dinfo.set_type(
+        alsa::seq::PortType::MIDI_GENERIC |
+        alsa::seq::PortType::APPLICATION);
+    dinfo.set_midi_channels(16);
+    dinfo.set_timestamping(true);
+    dinfo.set_timestamp_real(true);
+    dinfo.set_timestamp_queue(queue);
+    dinfo.set_name(&cstr);
+
+    sequencer.create_port(&dinfo).unwrap();
+    let input_port = alsa::seq::Addr {client: sequencer.client_id().unwrap(), port: dinfo.get_port()};
+
+    let output_port = alsa::seq::Addr {client: sequencer.client_id().unwrap(), port: OUTPUT_PORT};
+    AlsaClient {sequencer, output_port, input_port}
 
 }
 
