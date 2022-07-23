@@ -2,56 +2,10 @@ use futures_util::{SinkExt, StreamExt};
 use log::*;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async};
-use tokio_tungstenite::tungstenite::{Message, Result};
 use tokio_tungstenite::WebSocketStream;
 
 mod sequencer;
-
-fn handle_lstn(data: &str) -> Message {
-    let selected_port_handle: sequencer::PortHandle = serde_json::from_str(data).unwrap();
-    sequencer::listen(selected_port_handle);
-    Message::text("lstn\n{}")
-}
-
-fn handle_lsif() -> Message {
-    let port_list = sequencer::list_midi_ports();
-    let mut response = String::from("lsif\n");
-    response.push_str(serde_json::to_string(&port_list).unwrap().as_str());
-    Message::text(response)
-}
-
-fn grok_command(s: &str) -> (&str, &str) {
-    match s.chars().next() {
-        Some(c) => {
-            s.split_at(c.len_utf8() * 4)
-        },
-        None => s.split_at(0),
-    }
-}
-
-fn handle_socket_message(msg: Message) -> Result<Message, &'static str> {
-    let packet = msg.to_text().unwrap();
-    let (command, data) = grok_command(packet);
-    match command {
-	"lsif" => {
-	    Ok(handle_lsif())
-	}
-	"lstn" => {
-	    Ok(handle_lstn(data))
-	}
-	_ => {
-            Err("unknown command")
-	}
-    }
-}
-
-
-/* Safety
- *
- *
- */
-
-
+mod dispatcher;
 
 // #[derive(PartialEq)]
 // enum WsConnectionState {
@@ -71,7 +25,7 @@ async fn ws_event_loop(mut ws_stream: WebSocketStream<TcpStream>) {
                         if msg.is_close() {
                             error!("websocket closed");
                         }
-                        let data = handle_socket_message(msg);
+                        let data = dispatcher::dispatch_socket_message(msg);
                         match data {
                             Ok(message) => ws_stream.send(message).await.expect("ws_stream.send failed"),
                             Err(err) => info!("error: {}", err),
