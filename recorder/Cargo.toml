@@ -14,3 +14,4 @@ tokio = { version = "1", features = ["full"] }
 alsa = "*"
 serde_json = "*"
 serde = { version = "1.0", features = ["derive"] }
+once_cell = "*"
