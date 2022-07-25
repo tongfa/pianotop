@@ -75,9 +75,15 @@ async fn run() {
     listen_websocket(listener).await;
 }
 
+#[tokio::main]
+async fn run_sequencer() {
+    sequencer::record_servicer().await;
+}
+
 fn main() {
     env_logger::init();
     run();
+    run_sequencer();
     info!("main exiting");
 }
 
