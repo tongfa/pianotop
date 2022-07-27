@@ -1,0 +1,63 @@
+My last shipit was a midi recorder named piano play.
+I happen to be a life long piano player and so am interested in spending
+ time messing around with musical related things.
+Piano Play was a simple MIDI recorder. MIDI, for those who don't know, is a binary
+ protocol that transmits musicial information, it stands for
+ Musical Instrument Digital Interface.
+I first became aware of MIDI in the 1980's, as it's always been a prominent feature
+ on keyboards that I would checkout at the local music stores.
+I've been lucky enough to meet three people in my career who were involved in the design
+ of MIDI.  It was designed back in the 70's / early 80's, but I met
+ these folks much later than that, around 2007.
+MIDI also happens to be the thing that led me to have interest in timecode,
+ It does include a feature to sync two devices together by transmitting
+ SMTPE timecode between them.
+So MIDI has always been something interesting to me.
+And this shipit is about reconnecting to those things of my past.
+
+OK, so now my last shipit.
+It was a C app running on linux that interfaced to the ALSA sequencer library along with
+  a VUE app that had minimal features.  I was able demonstrate that I could "record",
+  MIDI notes which involved
+  passing MIDI data from a keyboard, to the kernel, and then to my app.  And the app could
+  "playback" meaning that same note data in my app could go back to the kernel and be
+  played on the keyboard.
+I remember being asked if I could edit the notes before playing them back, the answer at
+  the time was "no".  That would have been the next obvious feature to add to my last shipit.
+But instead of doing that I decided to rewrite the C app in Rust.
+In other words, I decided to reconnect the VUE app to the linux kernel by replacing the C
+  app with one written in Rust.
+
+After the last shipit I did some reading up on rust, and it seemed like at a high level it
+  solved many of the same problems I was solving in C, namely memory management, which can be
+  very monotonous.
+Over the last year or so I read through the Rust online tutorial to familiarize myself.
+I also started porting my C app into Rust.
+To be transparent about that, I did nearly all of this porting between the last shipit and now.
+When I was doing the porting, I had very limited time and so
+  was working in a "fast and furious" mode, which is never a good idea when working with
+  a new language like Rust.
+At some point, I stopped working on the rust porting.  I think summer came along and I starting
+  spending time enjoying the warmer weather.
+For this shipit, I decided to take another look at this porting effort,
+  to slow down a bit and
+  take my time on each challenge as it came before me.
+  Reconnect to the porting effort,
+  and Reconnect to my journey of learning Rust.
+
+Because of that frame of mine, I didn't get much done in terms of features.  The shipit does even less than my last one.  It connects
+to the ALSA sequencer, spins up two threads, one for a webservice and the other for communication to the
+ALSA sequencer, but that's it.  It's not capable of receiving any note data from an external source.
+
+Instead of showing you an app that does less than my last shipit (which was at best "almost impressive"),
+I am just going to show off some of the things I see in rust that I think are kind of neat.
+
+
+Rust projects come with a tool called cargo thats used for packaging, building and loading dependencies.
+
+
+match
+
+
+
+

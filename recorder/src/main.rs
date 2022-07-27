@@ -67,23 +67,28 @@ async fn listen_websocket(listener: TcpListener) {
 }
 
 
-#[tokio::main]
-async fn run() {
+async fn run_webservice() {
     let addr = "127.0.0.1:8123";
     let listener = TcpListener::bind(&addr).await.expect("Can't listen");
     info!("Listening on: {}", addr);
-    listen_websocket(listener).await;
+    listen_websocket(listener).await
+}
+
+async fn run_sequencer() {
+    info!("run sequencer");
+    sequencer::record_servicer().await
 }
 
 #[tokio::main]
-async fn run_sequencer() {
-    sequencer::record_servicer().await;
+async fn run() {
+    let webservice = tokio::spawn(run_webservice());
+    let sequencer = tokio::spawn(run_sequencer());
+    let (_r1, _r2) = (webservice.await, sequencer.await);
 }
 
 fn main() {
     env_logger::init();
     run();
-    run_sequencer();
     info!("main exiting");
 }
 
