@@ -1,14 +1,10 @@
-use std::{sync::{Mutex}, ffi::CString};
-use once_cell::sync::Lazy;
-
 pub mod alsa_client;
 
 mod record;
 pub async fn record_servicer() {
     loop {
         let f = record::AlsaEvent {};
-        let v = f.await;
-        // info!("event: {:?}", v);
+        f.await;
     }
 }
 
