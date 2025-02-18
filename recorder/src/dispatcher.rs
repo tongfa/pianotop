@@ -4,13 +4,13 @@ use serde_json;
 use crate::sequencer;
 
 fn handle_lstn(data: &str) -> Message {
-    let selected_port_handle: sequencer::PortHandle = serde_json::from_str(data).unwrap();
-    sequencer::listen(selected_port_handle);
+    let selected_port_handle: sequencer::alsa_client::PortHandle = serde_json::from_str(data).unwrap();
+    sequencer::alsa_client::listen(selected_port_handle);
     Message::text(format!("lstn\n{}", data).as_str())
 }
 
 fn handle_lsif() -> Message {
-    let port_list = sequencer::list_midi_ports();
+    let port_list = sequencer::alsa_client::list_midi_ports();
     let mut response = String::from("lsif\n");
     response.push_str(serde_json::to_string(&port_list).unwrap().as_str());
     Message::text(response)

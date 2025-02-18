@@ -4,7 +4,7 @@ use log::info;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::sequencer::CLIENT;
+use crate::sequencer::alsa_client::CLIENT;
 
 pub struct AlsaEvent { }
 
