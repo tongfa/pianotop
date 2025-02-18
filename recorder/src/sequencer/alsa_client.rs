@@ -83,6 +83,7 @@ pub fn list_midi_ports() -> Vec<PortHandle> {
     let mut port_list = Vec::new();
     for client in ci {
         if client.get_client() == alsa.output_port.client { continue; } // Skip ourselves
+        if client.get_client() == 14 { continue; } // Skip the default "through" port.
         let pi = alsa::seq::PortIter::new(&alsa.sequencer, client.get_client());
         for port in pi {
             let caps = port.get_capability();
@@ -96,12 +97,6 @@ pub fn list_midi_ports() -> Vec<PortHandle> {
                 port: port.get_port(),
             };
             port_list.push(ph)
-            // Connect source and dest ports
-            // let subs = seq::PortSubscribe::empty()?;
-            // subs.set_sender(seq::Addr { client: port.get_client(), port: port.get_port() });
-            // subs.set_dest(seq::Addr { client: our_id, port: our_port });
-            // println!("Reading from midi input {:?}", port);
-            // s.subscribe_port(&subs)?;
         }
     }
     port_list

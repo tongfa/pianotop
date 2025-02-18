@@ -56,8 +56,6 @@ Then open a browser on the URL from yarn and away you go!
 
 ## TODO list
 
-you probably don't want to select Midi-through-0 btw... TODO remove that one from the UI.
-
 * organize recordings as bundles, bundles defined as groups of notes separated by 15 seconds of silence
 * each bundle is saved as file
 * can select a file

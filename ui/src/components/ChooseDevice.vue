@@ -1,9 +1,10 @@
 <template>
   <div class="choose-device">
     <h1>Choose an ALSA MIDI input device:</h1>
-    <ul>
+    <ul v-if="interfaces.length">
       <li v-for="device in interfaces" :key="device.name" v-on:click="select(device)">{{ device.name }}</li>
     </ul>
+    <p v-if="interfaces.length === 0">No devices found, please attach a MIDI device (or run "sudo modprobe snd_virmidi midi_devs=1") and restart the backend.</p>
   </div>
 </template>
 
