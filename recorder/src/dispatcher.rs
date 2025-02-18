@@ -1,11 +1,12 @@
 use tokio_tungstenite::tungstenite::{Message, Result};
+use serde_json;
 
 use crate::sequencer;
 
 fn handle_lstn(data: &str) -> Message {
     let selected_port_handle: sequencer::PortHandle = serde_json::from_str(data).unwrap();
     sequencer::listen(selected_port_handle);
-    Message::text("lstn\n{}")
+    Message::text(format!("lstn\n{}", data).as_str())
 }
 
 fn handle_lsif() -> Message {
@@ -28,14 +29,14 @@ pub fn dispatch_socket_message(msg: Message) -> Result<Message, &'static str> {
     let packet = msg.to_text().unwrap();
     let (command, data) = grok_command(packet);
     match command {
-	"lsif" => {
-	    Ok(handle_lsif())
-	}
-	"lstn" => {
-	    Ok(handle_lstn(data))
-	}
-	_ => {
-            Err("unknown command")
-	}
+        "lsif" => {
+            Ok(handle_lsif())
+        }
+        "lstn" => {
+            Ok(handle_lstn(data))
+        }
+        _ => {
+                Err("unknown command")
+        }
     }
 }

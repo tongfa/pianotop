@@ -132,7 +132,8 @@ mod record;
 pub async fn record_servicer() {
     loop {
         let f = record::AlsaEvent {};
-        f.await;
+        let v = f.await;
+        // info!("event: {:?}", v);
     }
 }
 
